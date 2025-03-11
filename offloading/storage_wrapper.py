@@ -20,10 +20,14 @@ class ModuleWithStorage(nn.Module):
     def __init__(self, module: nn.Module, offsets=None):
         super().__init__()
         self.offsets = self.get_storage_offsets(module) if offsets is None else offsets
-        self.storage, self.module = self.put_on_storage_inplace_(module, offsets=self.offsets)
+        self.storage, self.module = self.put_on_storage_inplace_(
+            module, offsets=self.offsets
+        )
 
     @staticmethod
-    def put_on_storage_inplace_(module: nn.Module, offsets: Dict[str, Tuple[int, int]]) -> Tuple[torch.UntypedStorage, nn.Module]:
+    def put_on_storage_inplace_(
+        module: nn.Module, offsets: Dict[str, Tuple[int, int]]
+    ) -> Tuple[torch.UntypedStorage, nn.Module]:
         """Modify module so that every parameter and buffer is a pointer to a pre-allocated storage"""
         device = next(module.parameters()).device
         storage_size_bytes = max([x[-1] for x in offsets.values()])
@@ -34,20 +38,28 @@ class ModuleWithStorage(nn.Module):
         for name, x in chain(module.named_parameters(), module.named_buffers()):
             start, end = offsets[name]
             assert isinstance(x, torch.Tensor)
-            storage_view = torch.as_tensor(storage[start:end], dtype=x.dtype, device=device).view(x.shape)
+            storage_view = torch.as_tensor(
+                storage[start:end], dtype=x.dtype, device=device
+            ).view(x.shape)
             storage_view.copy_(x)
             assert storage_view.data_ptr() == storage.data_ptr() + start
-            x.data = storage_view  # <-- replace parameter/buffer with a pointer to storage
+            x.data = (
+                storage_view  # <-- replace parameter/buffer with a pointer to storage
+            )
 
         logger.debug("storage filled")
         for k, v in module.state_dict().items():
-            assert storage.data_ptr() <= v.data_ptr() <= storage.data_ptr() + storage.nbytes(), k
+            assert (
+                storage.data_ptr()
+                <= v.data_ptr()
+                <= storage.data_ptr() + storage.nbytes()
+            ), k
         return storage, module
 
     def forward(self, *args, **kwargs):
         return self.module(*args, **kwargs)
 
-    def __getattr__(self, name: str) -> torch.Any:
+    def __getattr__(self, name: str):
         try:
             return super().__getattr__(name)
         except AttributeError:
