@@ -31,6 +31,7 @@ def create_spec_generator(
     draft_engine_class,
     gen_type="SX",
     offload=False,
+    airllm=False,
     device_size=_DEFAULT_DEVICE_SIZE,
     check_tokenizer=False,
 ):
@@ -72,19 +73,27 @@ def create_spec_generator(
 
     if check_tokenizer:
         # verify that the two models have the same tokenizer
-        tokenizer_1 = transformers.AutoTokenizer.from_pretrained(model_name_1, legacy=False)
+        tokenizer_1 = transformers.AutoTokenizer.from_pretrained(
+            model_name_1, legacy=False
+        )
         vv0 = tokenizer.get_vocab()
         vv1 = tokenizer_1.get_vocab()
 
-        ignored_tokens = ["[PAD]"]  # disregard these tokens when comparing the cokonizers' vocabs
-        assert set(vv0.keys()).difference(ignored_tokens) == set(vv1.keys()).difference(ignored_tokens)
+        ignored_tokens = [
+            "[PAD]"
+        ]  # disregard these tokens when comparing the cokonizers' vocabs
+        assert set(vv0.keys()).difference(ignored_tokens) == set(vv1.keys()).difference(
+            ignored_tokens
+        )
         for k in set(vv0.keys()).difference(ignored_tokens):
             assert vv0[k] == vv1[k]
         del tokenizer_1, vv0, vv1
 
     logger.info(f"Loading Model 0: `{model_name_0}`, {draft_engine_class=}")
     if draft_engine_class.lower() in ("es", "static", "enginestatic"):
-        model_0 = transformers.AutoModelForCausalLM.from_pretrained(model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0)
+        model_0 = transformers.AutoModelForCausalLM.from_pretrained(
+            model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0
+        )
         draft_engine = engine.EngineStatic(model_0, max_len=args.tree_max_len)
     # elif draft_engine_class.lower() in ("esc", "staticcompiled", "enginestaticcompiled"):
     #     model_0 = transformers.AutoModelForCausalLM.from_pretrained(model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0)
@@ -92,7 +101,9 @@ def create_spec_generator(
     # elif draft_engine_class.lower() in ("ie", "inferenceengine"):
     #     draft_engine = engine.InferenceEngine(model_name_0, max_len=args.tree_max_len)
     elif draft_engine_class.lower() in ("padded", "inferenceenginepadded"):
-        draft_engine = engine.InferenceEnginePadded(model_name_0, max_len=args.tree_max_len)
+        draft_engine = engine.InferenceEnginePadded(
+            model_name_0, max_len=args.tree_max_len
+        )
     elif draft_engine_class.lower() in ("er", "regular", "engineregular"):
         draft_engine = engine.EngineRegular(model_name_0, max_len=args.tree_max_len)
     else:
@@ -103,20 +114,39 @@ def create_spec_generator(
 
     if offload:
         if "gptq" in model_name_1.lower():
-            model_1 = load_gptq_offloaded_model(model_name_1, device_size=device_size, main_device=device, max_input_length=gptq_max_input_length)
+            model_1 = load_gptq_offloaded_model(
+                model_name_1,
+                device_size=device_size,
+                main_device=device,
+                max_input_length=gptq_max_input_length,
+            )
         else:
-            model_1 = load_offloaded_model(model_name_1, device_size=device_size, main_device=device)
+            model_1 = load_offloaded_model(
+                model_name_1, device_size=device_size, main_device=device
+            )
+    elif airllm:
+        from airllm import AutoModel
 
+        model_1 = AutoModel.from_pretrained(
+            model_name_1, prefetching=False, batch_size_layer=1, compression="4bit"
+        )
+        logger.info("Finished initialsing airllm model.")
     else:
-        model_1 = transformers.AutoModelForCausalLM.from_pretrained(model_name_1, device_map=device, torch_dtype=torch.float16, revision=rev_1)
+        model_1 = transformers.AutoModelForCausalLM.from_pretrained(
+            model_name_1, device_map=device, torch_dtype=torch.float16, revision=rev_1
+        )
 
         if "gptq" in model_name_1.lower():
             model_1_config = transformers.AutoConfig.from_pretrained(model_name_1)
-            if getattr(model_1_config.quantization_config, "act_order", False) and (model_1_config.config.max_length < 16384):
+            if getattr(model_1_config.quantization_config, "act_order", False) and (
+                model_1_config.config.max_length < 16384
+            ):
                 try:
                     from auto_gptq import exllama_set_max_input_length
 
-                    model_1 = exllama_set_max_input_length(model_1, gptq_max_input_length)
+                    model_1 = exllama_set_max_input_length(
+                        model_1, gptq_max_input_length
+                    )
                     print("set `exllama_set_max_input_length` OK")
                 except (AttributeError, ValueError, ImportError):
                     # AttributeError may happen if GPTQ-quantized model has no attribute 'device_to_buffers'
@@ -142,7 +172,9 @@ def create_spec_generator(
     else:
         raise ValueError(f"unknown {gen_type=}")
 
-    logger.info(f"Created spec_generator of type {gen_type}; Models: {model_name_0}, {model_name_1}")
+    logger.info(
+        f"Created spec_generator of type {gen_type}; Models: {model_name_0}, {model_name_1}"
+    )
     return spec_generator
 
 
@@ -160,7 +192,10 @@ def run_tests(
     """runs uniform experiments from dataset using same set of parameters"""
     test_logs = []
 
-    for i in range(args.dataset_start_index, min(args.dataset_start_index + args.n_tests, len(dataset))):
+    for i in range(
+        args.dataset_start_index,
+        min(args.dataset_start_index + args.n_tests, len(dataset)),
+    ):
         prompt = dataset[i]
         _ = spec_generator.generate(
             prompt,
@@ -182,12 +217,20 @@ def run_tests(
         )
 
         test_logs.append(spec_generator.summary)
-        generated_text = spec_generator.tokenizer.decode(spec_generator.prefix_tokens[spec_generator.original_num_tokens :]).__repr__().strip("'")
+        generated_text = (
+            spec_generator.tokenizer.decode(
+                spec_generator.prefix_tokens[spec_generator.original_num_tokens :]
+            )
+            .__repr__()
+            .strip("'")
+        )
 
         excl_keys = ["ver", "model_name_0", "model_name_1"]
         log1 = {k: v for k, v in spec_generator.summary.items() if k not in excl_keys}
         log1 = {"run": i, **log1, "text": generated_text[:32]}
-        log1["prompt_text"] = log1["prompt_text"].replace(r" [\INST] ", "")[-32:]  # last 32 prompt chars
+        log1["prompt_text"] = log1["prompt_text"].replace(r" [\INST] ", "")[
+            -32:
+        ]  # last 32 prompt chars
 
         stdout_whitelist = (
             "run",
@@ -206,7 +249,14 @@ def run_tests(
             "speed",
             "mem_use",
         )
-        log_one_line(log1, save_dir=args.save_dir, exp_name=args.exp_name, verbose=args.verbose, msg_type="summary", stdout_whitelist=stdout_whitelist)
+        log_one_line(
+            log1,
+            save_dir=args.save_dir,
+            exp_name=args.exp_name,
+            verbose=args.verbose,
+            msg_type="summary",
+            stdout_whitelist=stdout_whitelist,
+        )
 
     df = pd.DataFrame(test_logs)
 
@@ -216,10 +266,14 @@ def run_tests(
         min_log_prob=min_log_prob,
         max_budget=max_budget,
         max_branch_width=max_branch_width,
-        gen_rate=round((df.new_tokens / df.iters).mean(), 2),  # macro-averaged generation rate
+        gen_rate=round(
+            (df.new_tokens / df.iters).mean(), 2
+        ),  # macro-averaged generation rate
         gen_rate_micro=round(df.new_tokens.sum() / df.iters.sum(), 2),
         gen_speed=round(df.speed.mean(), 3),
-        gen_speed_micro=round(df.new_tokens.sum() / (df.new_tokens / df.speed).sum(), 3),
+        gen_speed_micro=round(
+            df.new_tokens.sum() / (df.new_tokens / df.speed).sum(), 3
+        ),
         t0=round(df.t0.mean(), 4),
         t1=round(df.t1.mean(), 4),
         input_0=round(df.input_0.mean(), 1),
@@ -236,7 +290,14 @@ def run_tests(
     return exp_summary, test_logs
 
 
-def log_one_line(data_dict, verbose, save_dir=None, exp_name=None, msg_type=None, stdout_whitelist=None):
+def log_one_line(
+    data_dict,
+    verbose,
+    save_dir=None,
+    exp_name=None,
+    msg_type=None,
+    stdout_whitelist=None,
+):
     """
     Logs key-value pairs from a dictionary to both the console (as a single line) and a JSONL file,
     with optional filtering for certain keys and conditional logging based on verbosity.
@@ -249,13 +310,31 @@ def log_one_line(data_dict, verbose, save_dir=None, exp_name=None, msg_type=None
         msg_type (str, optional): A message type to be included in the log file. Defaults to None.
     """
     stdout_blacklist = ["prompt_text", "text"]
-    message_colors = {"exp": "GREEN", "summary": "WHITE", "config": "YELLOW_DARK", "zero": "blue", "info": "GREEN_DARK"}
+    message_colors = {
+        "exp": "GREEN",
+        "summary": "WHITE",
+        "config": "YELLOW_DARK",
+        "zero": "blue",
+        "info": "GREEN_DARK",
+    }
 
     if verbose or (logger.level >= logging.INFO):
         if stdout_whitelist:
-            log_line = "  ".join([f"{k}:{v}" for k, v in data_dict.items() if k in stdout_whitelist and v is not None])
+            log_line = "  ".join(
+                [
+                    f"{k}:{v}"
+                    for k, v in data_dict.items()
+                    if k in stdout_whitelist and v is not None
+                ]
+            )
         else:
-            log_line = "  ".join([f"{k}:{v}" for k, v in data_dict.items() if k not in stdout_blacklist and v is not None])
+            log_line = "  ".join(
+                [
+                    f"{k}:{v}"
+                    for k, v in data_dict.items()
+                    if k not in stdout_blacklist and v is not None
+                ]
+            )
 
         print(colored(log_line, message_colors.get(msg_type, "WHITE")))
 
@@ -305,13 +384,14 @@ def arg_to_list(args, arg):
 
 def main(args):
 
-    logger.warning(f"Starting test with models {args.model_0}, {args.model_1}")
+    logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
     spec_generator = create_spec_generator(
         model_name_0=args.model_0,
         model_name_1=args.model_1,
         draft_engine_class=args.draft_engine_class,
         gen_type=args.gen_type,
         offload=args.offload,
+        airllm=args.airllm,
         device_size=args.device_size,
         check_tokenizer=False,
     )
@@ -329,7 +409,9 @@ def main(args):
         dataset = utils.get_dataset(dataset_file_name)
 
     if args.device_size != _DEFAULT_DEVICE_SIZE and not args.offload:
-        logger.warning(f"Passed --device_size of {args.device_size}, but offloading is disabled")
+        logger.warning(
+            f"Passed --device_size of {args.device_size}, but offloading is disabled"
+        )
 
     logs = []
     summaries = []
@@ -360,12 +442,26 @@ def main(args):
     )
     if args.offload:
         config_dict["device_size"] = args.device_size
-    log_one_line(config_dict, save_dir=args.save_dir, exp_name=args.exp_name, verbose=args.verbose, msg_type="config")
+    log_one_line(
+        config_dict,
+        save_dir=args.save_dir,
+        exp_name=args.exp_name,
+        verbose=args.verbose,
+        msg_type="config",
+    )
 
     with torch.inference_mode():
         if args.zero:
-            log_one_line({"mode": "zero"}, save_dir=args.save_dir, exp_name=args.exp_name, verbose=args.verbose, msg_type="zero")
-            spec_generator.tokenizer.pad_token_id = spec_generator.tokenizer.eos_token_id
+            log_one_line(
+                {"mode": "zero"},
+                save_dir=args.save_dir,
+                exp_name=args.exp_name,
+                verbose=args.verbose,
+                msg_type="zero",
+            )
+            spec_generator.tokenizer.pad_token_id = (
+                spec_generator.tokenizer.eos_token_id
+            )
             total_time = 0
 
             gene_config = transformers.GenerationConfig(
@@ -378,21 +474,34 @@ def main(args):
                 pad_token_id=2,
             )
 
-            for i in range(args.dataset_start_index, args.dataset_start_index + args.n_tests):
+            for i in range(
+                args.dataset_start_index, args.dataset_start_index + args.n_tests
+            ):
                 try:
                     prompt = dataset[i]
-                    inputs = spec_generator.tokenizer(prompt, return_tensors="pt").to(device)
+                    inputs = spec_generator.tokenizer(prompt, return_tensors="pt").to(
+                        device
+                    )
                     with utils.Timing() as t:
-                        spec_generator.target_engine.model.generate(**inputs, generation_config=gene_config)
+                        spec_generator.target_engine.model.generate(
+                            **inputs, generation_config=gene_config
+                        )
                     log_one_line(
-                        {"prompt": i, "elapsed": round(t.elapsed, 3)}, save_dir=args.save_dir, exp_name=args.exp_name, verbose=args.verbose, msg_type="zero"
+                        {"prompt": i, "elapsed": round(t.elapsed, 3)},
+                        save_dir=args.save_dir,
+                        exp_name=args.exp_name,
+                        verbose=args.verbose,
+                        msg_type="zero",
                     )
                     total_time += t.elapsed
                 except RuntimeError:
                     print(colored(f"RuntineError in test {i}; skipping...", "RED"))
                     pass
 
-            log_dict_zero = {"total_time": round(total_time, 3), "speed": round(args.max_new_tokens * args.n_tests / total_time, 3)}
+            log_dict_zero = {
+                "total_time": round(total_time, 3),
+                "speed": round(args.max_new_tokens * args.n_tests / total_time, 3),
+            }
 
             log_one_line(
                 log_dict_zero,
@@ -401,7 +510,11 @@ def main(args):
                 verbose=args.verbose,
                 msg_type="zero",
             )
-            print("-" * 120 + "\n   S U M M A R Y  (run without speculative decoding) \n" + "-" * 120)
+            print(
+                "-" * 120
+                + "\n   S U M M A R Y  (run without speculative decoding) \n"
+                + "-" * 120
+            )
             print(log_dict_zero)
             print("-" * 120)
 
@@ -414,7 +527,13 @@ def main(args):
 
     # Convert string arguments to lists of integers
     sweep_args_present = []
-    args_can_sweep = ["max_n_beams", "max_beam_len", "max_budget", "min_log_prob", "max_branch_width"]  # "max_branch_width" removed
+    args_can_sweep = [
+        "max_n_beams",
+        "max_beam_len",
+        "max_budget",
+        "min_log_prob",
+        "max_branch_width",
+    ]  # "max_branch_width" removed
     arg_lists = []
     for arg in args_can_sweep:
         arg_list = arg_to_list(args, arg)
@@ -426,8 +545,16 @@ def main(args):
         logger.warning(f"More than two sweep arguments detected: {sweep_args_present}.")
 
     combinations = product(*arg_lists)
-    combo_pbar = tqdm(combinations, desc=colored("hyperparameters sweep", "HIGHLIGHTED_GREEN"))
-    for max_n_beams, max_beam_len, max_budget, min_log_prob, max_branch_width in combo_pbar:  # align with `args_can_sweep`
+    combo_pbar = tqdm(
+        combinations, desc=colored("hyperparameters sweep", "HIGHLIGHTED_GREEN")
+    )
+    for (
+        max_n_beams,
+        max_beam_len,
+        max_budget,
+        min_log_prob,
+        max_branch_width,
+    ) in combo_pbar:  # align with `args_can_sweep`
         print()
         exp_env = dict(
             gen_type=args.gen_type,
@@ -462,10 +589,19 @@ def main(args):
         summary["exp_time"] = round(t.elapsed, 2)
         summaries.append(summary)
         logs.extend(test_logs)
-        log_one_line(summary, save_dir=args.save_dir, exp_name=args.exp_name, verbose=args.verbose, msg_type="exp")
+        log_one_line(
+            summary,
+            save_dir=args.save_dir,
+            exp_name=args.exp_name,
+            verbose=args.verbose,
+            msg_type="exp",
+        )
 
         if args.wandb:
-            wandb.init(project=args.wandb_project, name=f"{args.exp_name}__b{max_n_beams}x{max_beam_len}")
+            wandb.init(
+                project=args.wandb_project,
+                name=f"{args.exp_name}__b{max_n_beams}x{max_beam_len}",
+            )
             wandb.log({**config_dict, **summary})
             wandb.finish()
 
@@ -477,8 +613,29 @@ def main(args):
     print(sep + f"\n       A R G U M E N T S   {args.exp_name}\n" + sep)
     print(args)
     print(sep + f"\n       S U M M A R Y   R E S U L T S   {args.exp_name} \n" + sep)
-    output_renames = {"max_branch_width": "branch", "max_n_beams": "beams", "max_beam_len": "max_h", "max_budget": "budget", "min_log_prob": "minLP"}
-    print(df[[*args_can_sweep, "t0", "t1", "tree_h", "tree_size", "min_CLP", "exp_time", "gen_rate", "gen_speed", "mem_use"]].rename(columns=output_renames))
+    output_renames = {
+        "max_branch_width": "branch",
+        "max_n_beams": "beams",
+        "max_beam_len": "max_h",
+        "max_budget": "budget",
+        "min_log_prob": "minLP",
+    }
+    print(
+        df[
+            [
+                *args_can_sweep,
+                "t0",
+                "t1",
+                "tree_h",
+                "tree_size",
+                "min_CLP",
+                "exp_time",
+                "gen_rate",
+                "gen_speed",
+                "mem_use",
+            ]
+        ].rename(columns=output_renames)
+    )
     print(sep)
 
     return summaries, logs
@@ -492,6 +649,12 @@ if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"] = "false"  # avoiding warnings
 
     # DEFAULT MODEL NAMES
+    # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
+
+    # model_name_0 = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ"
+    # model_name_1 = "TheBloke/Llama-2-7B-Chat-GPTQ"
+
     model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
@@ -501,25 +664,77 @@ if __name__ == "__main__":
     parser.add_argument("--save_dir", help="Experiments directory", default="logs")
     parser.add_argument("--model_0", help="Model 0 name", default=model_name_0)
     parser.add_argument("--model_1", help="Model 1 name", default=model_name_1)
-    parser.add_argument("-d", "--dataset", help="Datastet for testing. oasst or wikitext only for now", default="oasst")
-    parser.add_argument("--dataset_start_index", help="Dataset index to start from", default=0, type=int)
-    parser.add_argument("-g", "--gen_type", help="SpecExecBase, SpecInfer or other class", default="SpecExecBase")
-    parser.add_argument("--temperature", help="Sampling temperature", default=1.0, type=float)  # 0 for greedy
-    parser.add_argument("--top_p", help="Sampling top_p", default=1.0, type=float)
-    parser.add_argument("-t", "--temp", help="Sampling temperature and top_p as 4 digit string. '0609'-> 0.6, 0.9", default=None)
-    parser.add_argument("--n_tests", help="Num of tests in each config", default=10, type=int)
-    parser.add_argument("-b", "--max_n_beams", "--n_beams", help="Num of beams in each exp; CAN SWEEP", default="128")
-    parser.add_argument("-m", "--max_beam_len", help="max beam len; CAN SWEEP", default="32")
-    parser.add_argument("--branching", help="tree styles for fixed trees", default=None)
-    parser.add_argument("--max_budget", help="speculation token budget for fixed trees; CAN SWEEP", default=None)
-    parser.add_argument("--max_branch_width", help="max_branch_width for fixed trees and SX; CAN SWEEP", default="32")
     parser.add_argument(
-        "--tree_max_len", help="max length of tree and engine cache, should fit prompt, generated and speculated tokens", default=4096, type=int
+        "-d",
+        "--dataset",
+        help="Datastet for testing. oasst or wikitext only for now",
+        default="oasst",
     )
-    parser.add_argument("--replacement", help="draft model sampling with replacement", action="store_true")
-    parser.add_argument("--repack", help="repack draft tree by combining identical node paths", action="store_true")
+    parser.add_argument(
+        "--dataset_start_index", help="Dataset index to start from", default=0, type=int
+    )
+    parser.add_argument(
+        "-g",
+        "--gen_type",
+        help="SpecExecBase, SpecInfer or other class",
+        default="SpecExecBase",
+    )
+    parser.add_argument(
+        "--temperature", help="Sampling temperature", default=1.0, type=float
+    )  # 0 for greedy
+    parser.add_argument("--top_p", help="Sampling top_p", default=1.0, type=float)
+    parser.add_argument(
+        "-t",
+        "--temp",
+        help="Sampling temperature and top_p as 4 digit string. '0609'-> 0.6, 0.9",
+        default=None,
+    )
+    parser.add_argument(
+        "--n_tests", help="Num of tests in each config", default=10, type=int
+    )
+    parser.add_argument(
+        "-b",
+        "--max_n_beams",
+        "--n_beams",
+        help="Num of beams in each exp; CAN SWEEP",
+        default="128",
+    )
+    parser.add_argument(
+        "-m", "--max_beam_len", help="max beam len; CAN SWEEP", default="32"
+    )
+    parser.add_argument("--branching", help="tree styles for fixed trees", default=None)
+    parser.add_argument(
+        "--max_budget",
+        help="speculation token budget for fixed trees; CAN SWEEP",
+        default=None,
+    )
+    parser.add_argument(
+        "--max_branch_width",
+        help="max_branch_width for fixed trees and SX; CAN SWEEP",
+        default="32",
+    )
+    parser.add_argument(
+        "--tree_max_len",
+        help="max length of tree and engine cache, should fit prompt, generated and speculated tokens",
+        default=4096,
+        type=int,
+    )
+    parser.add_argument(
+        "--replacement",
+        help="draft model sampling with replacement",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--repack",
+        help="repack draft tree by combining identical node paths",
+        action="store_true",
+    )
     parser.add_argument("--max_new_tokens", default=32, type=int)
-    parser.add_argument("--min_log_prob", help="min log proba threshold for added leafs; CAN SWEEP", default=None)
+    parser.add_argument(
+        "--min_log_prob",
+        help="min log proba threshold for added leafs; CAN SWEEP",
+        default=None,
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--loglevel", default="WARNING")
     parser.add_argument("--debug", action="store_true")
@@ -528,9 +743,16 @@ if __name__ == "__main__":
     parser.add_argument("--device_size", type=int, default=_DEFAULT_DEVICE_SIZE)
     parser.add_argument("--wandb", help="Wandb enabled", action="store_true")
     parser.add_argument("--draft_temperature", default=None, type=float),
-    parser.add_argument("--wandb_project", help="Wandb project name", default="spec_trees")
+    parser.add_argument(
+        "--wandb_project", help="Wandb project name", default="spec_trees"
+    )
     parser.add_argument("--zero", help="zero speculation", action="store_true")
-    parser.add_argument("--draft_engine_class", "--draft_engine", help="EngineStatic or other class", default="EngineRegular")
+    parser.add_argument(
+        "--draft_engine_class",
+        "--draft_engine",
+        help="EngineStatic or other class",
+        default="EngineRegular",
+    )
 
     args = parser.parse_args()
 
@@ -548,7 +770,9 @@ if __name__ == "__main__":
 
     if args.temp is not None:
         # overriding args.temperature and args.top_p with decoded args.temp
-        assert len(args.temp) == 4, f"args.temp should be a 4-digit string, received {args.temp}."
+        assert (
+            len(args.temp) == 4
+        ), f"args.temp should be a 4-digit string, received {args.temp}."
         args.temperature = float(f"{args.temp[0]}.{args.temp[1]}")
         args.top_p = float(f"{args.temp[2]}.{args.temp[3]}")
 

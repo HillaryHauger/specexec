@@ -21,14 +21,20 @@ class EngineRegular:
         self.max_len = max_len
         self.device = device
         if isinstance(model_name, str):
-            self.model = transformers.AutoModelForCausalLM.from_pretrained(model_name, device_map=device)
+            self.model = transformers.AutoModelForCausalLM.from_pretrained(
+                model_name, device_map=device
+            )
         else:
             self.model = model_name
         self.config = self.model.config
         self.kv_cache = DynamicCachePlus()
 
         # removing artifacts of StaticCache if previously used with the model
-        for i, layer in enumerate(self.model.model.layers):
+        try:
+            layers = self.model.model.layers
+        except:
+            layers = self.model.model.model.layers
+        for i, layer in enumerate(layers):
             if hasattr(layer.self_attn, "past_key_value"):
                 delattr(layer.self_attn, "past_key_value")
 
@@ -55,7 +61,14 @@ class EngineRegular:
                 cache_position=cache_position,
             )
         else:
-            assert torch.equal(cache_position, torch.arange(cache_position[0], cache_position[0] + cache_position.numel(), device=cache_position.device))
+            assert torch.equal(
+                cache_position,
+                torch.arange(
+                    cache_position[0],
+                    cache_position[0] + cache_position.numel(),
+                    device=cache_position.device,
+                ),
+            )
 
             output = self.model.forward(
                 input_ids=input_ids,
@@ -78,7 +91,9 @@ class EngineRegular:
     def clear_kv(self):
         self.kv_cache = DynamicCachePlus()
 
-    def reorder_cache_tokens(self, source_token_idxs: torch.tensor, dest_token_idxs: torch.tensor = None):
+    def reorder_cache_tokens(
+        self, source_token_idxs: torch.tensor, dest_token_idxs: torch.tensor = None
+    ):
         """Applies indices mask to KV cache or truncates it"""
 
         cache_size = self.kv_cache[0][0].shape[-2]  # replace with self.kv_len_used
@@ -87,26 +102,48 @@ class EngineRegular:
 
         left_edge = dest_token_idxs.min() if dest_token_idxs is not None else 0
 
-        if source_token_idxs.max() >= cache_size:  # source includes elements outside of cache
+        if (
+            source_token_idxs.max() >= cache_size
+        ):  # source includes elements outside of cache
             source_token_idxs = source_token_idxs[source_token_idxs < cache_size]
-            dest_token_idxs = torch.arange(left_edge, left_edge + source_token_idxs.shape[-1], device=self.device)
+            dest_token_idxs = torch.arange(
+                left_edge, left_edge + source_token_idxs.shape[-1], device=self.device
+            )
 
-        if dest_token_idxs is None:  # assumed that destination starts from cache beginning
-            dest_token_idxs = torch.arange(source_token_idxs.shape[-1], device=self.device)
+        if (
+            dest_token_idxs is None
+        ):  # assumed that destination starts from cache beginning
+            dest_token_idxs = torch.arange(
+                source_token_idxs.shape[-1], device=self.device
+            )
 
         new_cache = []
         for layer_cache_k, layer_cache_v in self.kv_cache:
             new_cache.append(
                 (
-                    torch.cat([layer_cache_k[:, :, :left_edge, :], layer_cache_k[:, :, source_token_idxs, :]], dim=-2),
-                    torch.cat([layer_cache_v[:, :, :left_edge, :], layer_cache_v[:, :, source_token_idxs, :]], dim=-2),
+                    torch.cat(
+                        [
+                            layer_cache_k[:, :, :left_edge, :],
+                            layer_cache_k[:, :, source_token_idxs, :],
+                        ],
+                        dim=-2,
+                    ),
+                    torch.cat(
+                        [
+                            layer_cache_v[:, :, :left_edge, :],
+                            layer_cache_v[:, :, source_token_idxs, :],
+                        ],
+                        dim=-2,
+                    ),
                 )
             )
         self.kv_cache = DynamicCachePlus.from_legacy_cache(tuple(new_cache))
 
     def set_max_len(self, new_max_len):
         if self.kv_cache is not None and self.kv_len_used > new_max_len:
-            raise ValueError(f"Current cache size {self.kv_len_used()} is greater than new `max_len` {new_max_len}.")
+            raise ValueError(
+                f"Current cache size {self.kv_len_used()} is greater than new `max_len` {new_max_len}."
+            )
         self.max_len = new_max_len
 
 
@@ -117,10 +154,17 @@ class EngineRegularDummy(EngineRegular):
 
     def __init__(self, model_name=None, probs=None, **kwargs):
         if model_name is None:
-            model_name = transformers.AutoModelForCausalLM.from_pretrained(self.sample_model_name).to(0)
+            model_name = transformers.AutoModelForCausalLM.from_pretrained(
+                self.sample_model_name
+            ).to(0)
         super().__init__(model_name=model_name, **kwargs)
 
-        self.logits = torch.ones(self.model.config.vocab_size, dtype=torch.float32, device=self.device) * torch.finfo(torch.float32).min
+        self.logits = (
+            torch.ones(
+                self.model.config.vocab_size, dtype=torch.float32, device=self.device
+            )
+            * torch.finfo(torch.float32).min
+        )
 
         probs = torch.tensor([0.0, 0.1, 0.2, 0.3, 0.4]) if probs is None else probs
         self.logits = self.get_logits_from_probs(probs).to(self.device)
@@ -130,10 +174,15 @@ class EngineRegularDummy(EngineRegular):
         if probs.sum() != 1:
             probs = F.normalize(probs, dim=-1, p=1)
         probs[probs == 0] = torch.finfo(torch.float32).eps
-        logits = torch.ones(self.model.config.vocab_size, dtype=torch.float32) * torch.finfo(torch.float32).min
+        logits = (
+            torch.ones(self.model.config.vocab_size, dtype=torch.float32)
+            * torch.finfo(torch.float32).min
+        )
         logits[: probs.shape[-1]] = torch.log(probs)
         logits[logits < -10] = torch.finfo(torch.float32).min
-        assert torch.allclose(F.softmax(logits, dim=-1)[: probs.shape[-1]], probs, atol=1e-6)
+        assert torch.allclose(
+            F.softmax(logits, dim=-1)[: probs.shape[-1]], probs, atol=1e-6
+        )
         return logits
 
     @torch.inference_mode()
@@ -144,7 +193,12 @@ class EngineRegularDummy(EngineRegular):
         position_ids: Optional[torch.LongTensor] = None,
         cache_position: torch.LongTensor = None,
     ):
-        logits = super().forward(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids, cache_position=cache_position)
+        logits = super().forward(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            cache_position=cache_position,
+        )
         adj_logits = self.logits.tile(*logits.shape[:-1], 1)
         return adj_logits
 
@@ -154,7 +208,12 @@ class EngineSequoiaIE:
 
     def __init__(self, model_name, max_len, dtype=torch.float16, device="cuda:0"):
 
-        self.i_engine = InferenceEngineSequoia(model_name_or_path=model_name, max_length=max_len, dtype=dtype, device=device)
+        self.i_engine = InferenceEngineSequoia(
+            model_name_or_path=model_name,
+            max_length=max_len,
+            dtype=dtype,
+            device=device,
+        )
 
         self.model_name = model_name
         self.max_len = max_len
@@ -170,7 +229,9 @@ class EngineSequoiaIE:
         position_ids: Optional[torch.LongTensor] = None,
         cache_position: torch.LongTensor = None,
     ):
-        attention_mask_inverted = (1 - attention_mask) * torch.finfo(attention_mask.dtype).min
+        attention_mask_inverted = (1 - attention_mask) * torch.finfo(
+            attention_mask.dtype
+        ).min
 
         logits = self.i_engine.model_run(
             input_ids=input_ids,
@@ -187,27 +248,50 @@ class EngineSequoiaIE:
     def kv_len_used(self):
         return (self.i_engine.kv_cache.k_cache[0, 0, 0, :, 0] != 0).sum()
 
-    def reorder_cache_tokens(self, source_token_idxs: torch.LongTensor, dest_token_idxs=None):
+    def reorder_cache_tokens(
+        self, source_token_idxs: torch.LongTensor, dest_token_idxs=None
+    ):
         """
         reorders cache along axis=2 (tokens)
-        assumes batch_size==1  
+        assumes batch_size==1
         accepts int and bool indices
         if source_token_idxs.dtype == torch.bool assumes source_token_idxs.shape == self.key_cache.shape[2]
         resets setting {{ the rest of cache OR .key_cache[0, 0] }} to zeros to ensure that get_seq_length() works right
         """
         _cache = self.i_engine.kv_cache
 
-        if dest_token_idxs is None:  # assumed that destination starts from cache beginning
-            dest_size = source_token_idxs.sum() if source_token_idxs.dtype == torch.bool else source_token_idxs.shape[-1]
+        if (
+            dest_token_idxs is None
+        ):  # assumed that destination starts from cache beginning
+            dest_size = (
+                source_token_idxs.sum()
+                if source_token_idxs.dtype == torch.bool
+                else source_token_idxs.shape[-1]
+            )
             dest_token_idxs = torch.arange(dest_size, device=self.device)
 
-        if (source_token_idxs.dtype == torch.bool) and (source_token_idxs.shape[-1] < _cache.k_cache.shape[-2]):
-            source_token_idxs = F.pad(input=source_token_idxs, pad=(0, _cache.k_cache.shape[-2] - source_token_idxs.shape[-1]), mode="constant", value=False)
+        if (source_token_idxs.dtype == torch.bool) and (
+            source_token_idxs.shape[-1] < _cache.k_cache.shape[-2]
+        ):
+            source_token_idxs = F.pad(
+                input=source_token_idxs,
+                pad=(0, _cache.k_cache.shape[-2] - source_token_idxs.shape[-1]),
+                mode="constant",
+                value=False,
+            )
 
-        _cache.k_cache[:, :, :, dest_token_idxs.to(_cache.device), :] = _cache.k_cache[:, :, :, source_token_idxs.to(_cache.device), :]
-        _cache.v_cache[:, :, :, dest_token_idxs.to(_cache.device), :] = _cache.v_cache[:, :, :, source_token_idxs.to(_cache.device), :]
+        _cache.k_cache[:, :, :, dest_token_idxs.to(_cache.device), :] = _cache.k_cache[
+            :, :, :, source_token_idxs.to(_cache.device), :
+        ]
+        _cache.v_cache[:, :, :, dest_token_idxs.to(_cache.device), :] = _cache.v_cache[
+            :, :, :, source_token_idxs.to(_cache.device), :
+        ]
 
-        right_edge = torch.where(dest_token_idxs)[0].max() if dest_token_idxs.dtype == torch.bool else dest_token_idxs.max()
+        right_edge = (
+            torch.where(dest_token_idxs)[0].max()
+            if dest_token_idxs.dtype == torch.bool
+            else dest_token_idxs.max()
+        )
 
         # setting the rest of the cache to zeros to ensure that get_seq_length() works right
         _cache.k_cache[0, 0, 0, right_edge.to(_cache.device) :, :].zero_()
@@ -227,11 +311,15 @@ def benchmark_engine(engine, input_sizes=[256], repeats=5, max_len=1024):
 
         _ = benchmark_single(engine, input_size=1, repeats=1)  # warmup
 
-        pbar = tqdm(input_sizes, desc="benchmarking...")  # (total=(max_pow + 1) * repeats)
+        pbar = tqdm(
+            input_sizes, desc="benchmarking..."
+        )  # (total=(max_pow + 1) * repeats)
         stats = []
         for n in pbar:
             try:
-                s = benchmark_single(engine, input_size=n, repeats=repeats, max_len=_max_len)
+                s = benchmark_single(
+                    engine, input_size=n, repeats=repeats, max_len=_max_len
+                )
                 # results.append({**stats, **common_stats})
                 stats.append(s)
                 pbar.desc = f"benchmarked {n=}"
@@ -294,12 +382,28 @@ class DynamicCachePlus(transformers.DynamicCache):
         cache_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-        if (cache_kwargs is not None) and ("cache_position" in cache_kwargs) and (len(self.key_cache) > layer_idx):
+        if (
+            (cache_kwargs is not None)
+            and ("cache_position" in cache_kwargs)
+            and (len(self.key_cache) > layer_idx)
+        ):
             cache_position = cache_kwargs["cache_position"]
-            pad_size = cache_position.max().item() + 1 - self.key_cache[layer_idx].shape[-2]
-            self.key_cache[layer_idx] = F.pad(input=self.key_cache[layer_idx], pad=(0, 0, 0, pad_size), mode="constant", value=0)
+            pad_size = (
+                cache_position.max().item() + 1 - self.key_cache[layer_idx].shape[-2]
+            )
+            self.key_cache[layer_idx] = F.pad(
+                input=self.key_cache[layer_idx],
+                pad=(0, 0, 0, pad_size),
+                mode="constant",
+                value=0,
+            )
             self.key_cache[layer_idx][:, :, cache_position, :] = key_states
-            self.value_cache[layer_idx] = F.pad(input=self.value_cache[layer_idx], pad=(0, 0, 0, pad_size), mode="constant", value=0)
+            self.value_cache[layer_idx] = F.pad(
+                input=self.value_cache[layer_idx],
+                pad=(0, 0, 0, pad_size),
+                mode="constant",
+                value=0,
+            )
             self.value_cache[layer_idx][:, :, cache_position, :] = value_states
 
         elif len(self.key_cache) <= layer_idx:
@@ -324,7 +428,9 @@ class DynamicCachePlus(transformers.DynamicCache):
 
         return self.key_cache[layer_idx], self.value_cache[layer_idx]
 
-    def reorder_cache_tokens(self, source_token_idxs: torch.tensor, dest_token_idxs: torch.tensor = None):
+    def reorder_cache_tokens(
+        self, source_token_idxs: torch.tensor, dest_token_idxs: torch.tensor = None
+    ):
         """Applies indices mask to KV cache or truncates it"""
 
         cache_shape = self.key_cache[0].shape
@@ -334,22 +440,44 @@ class DynamicCachePlus(transformers.DynamicCache):
 
         left_edge = dest_token_idxs.min() if dest_token_idxs is not None else 0
 
-        if source_token_idxs.max() >= cache_shape[-2]:  # source includes elements outside of cache
+        if (
+            source_token_idxs.max() >= cache_shape[-2]
+        ):  # source includes elements outside of cache
             source_token_idxs = source_token_idxs[source_token_idxs < cache_shape[-2]]
-            dest_token_idxs = torch.arange(left_edge, left_edge + source_token_idxs.shape[-1], device=self.device)
+            dest_token_idxs = torch.arange(
+                left_edge, left_edge + source_token_idxs.shape[-1], device=self.device
+            )
 
-        if dest_token_idxs is None:  # assumed that destination starts from cache beginning
-            dest_token_idxs = torch.arange(source_token_idxs.shape[-1], device=self.device)
+        if (
+            dest_token_idxs is None
+        ):  # assumed that destination starts from cache beginning
+            dest_token_idxs = torch.arange(
+                source_token_idxs.shape[-1], device=self.device
+            )
 
         for layer_cache_k, layer_cache_v in zip(self.key_cache, self.value_cache):
-            layer_cache_k = torch.cat([layer_cache_k[:, :, :left_edge, :], layer_cache_k[:, :, source_token_idxs, :]], dim=-2)
-            layer_cache_v = torch.cat([layer_cache_v[:, :, :left_edge, :], layer_cache_v[:, :, source_token_idxs, :]], dim=-2)
+            layer_cache_k = torch.cat(
+                [
+                    layer_cache_k[:, :, :left_edge, :],
+                    layer_cache_k[:, :, source_token_idxs, :],
+                ],
+                dim=-2,
+            )
+            layer_cache_v = torch.cat(
+                [
+                    layer_cache_v[:, :, :left_edge, :],
+                    layer_cache_v[:, :, source_token_idxs, :],
+                ],
+                dim=-2,
+            )
 
     def to_legacy_cache(self):
         return self
 
     @classmethod
-    def from_legacy_cache(cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None) -> "DynamicCachePlus":
+    def from_legacy_cache(
+        cls, past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+    ) -> "DynamicCachePlus":
         if isinstance(past_key_values, cls):
             return past_key_values
         else:
