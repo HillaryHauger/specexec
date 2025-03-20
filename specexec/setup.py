@@ -5,10 +5,9 @@ with open("requirements.txt") as f:
 requirements = [line for line in requirements if not line.startswith("#")]
 
 setup(
-    name="specdec",
+    name="specexec",
     version="0.1",
-    package_dir={"": "specdec"},
-    packages=find_packages("specdec"),
+    packages=find_packages(),
     description="Companion code for SpecExec paper and beyond",
     keywords="speculative decoding",
     install_requires=requirements,
