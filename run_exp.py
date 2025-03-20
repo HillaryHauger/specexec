@@ -740,7 +740,6 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("-o", "--offload", action="store_true")
-    parser.add_argument("-a", "--airllm", action="store_true")
     parser.add_argument("--device_size", type=int, default=_DEFAULT_DEVICE_SIZE)
     parser.add_argument("--wandb", help="Wandb enabled", action="store_true")
     parser.add_argument("--draft_temperature", default=None, type=float),

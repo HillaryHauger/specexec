@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import torch
-import psutil
 
 from .trees import Tree
 from . import utils
@@ -60,22 +59,13 @@ class SpecBase(ABC):
 
         utils.set_seed(seed)
         torch.cuda.reset_peak_memory_stats()
-        process = psutil.Process()
 
         if hasattr(self, "tree"):
             del self.tree
-        self.reset_engines(
-            prefix_len=len(self.prefix_tokens), max_new_tokens=max_new_tokens, **kwargs
-        )
+        self.reset_engines(prefix_len=len(self.prefix_tokens), max_new_tokens=max_new_tokens, **kwargs)
 
-        self.tree = Tree(
-            prefix_tokens=self.prefix_tokens,
-            draft_engine=self.draft_engine,
-            tokenizer=self.tokenizer,
-        )
-        self.levels = self.get_tree_levels(
-            **kwargs
-        )  # in case the child class works with fixed trees
+        self.tree = Tree(prefix_tokens=self.prefix_tokens, draft_engine=self.draft_engine, tokenizer=self.tokenizer)
+        self.levels = self.get_tree_levels(**kwargs)  # in case the child class works with fixed trees
 
         # warmup:
         logger.debug("=====  W A R M U P  ========")
@@ -85,9 +75,7 @@ class SpecBase(ABC):
             stats1, warmup_tokens = self.validate_tree(**kwargs)
         torch.cuda.empty_cache()
 
-        logger.debug(
-            f"warmup time={tw0.elapsed + tw1.elapsed:.3f}; generated {len(warmup_tokens)} tokens."
-        )
+        logger.debug(f"warmup time={tw0.elapsed + tw1.elapsed:.3f}; generated {len(warmup_tokens)} tokens.")
         self.prefix_tokens.extend(warmup_tokens)
 
         # main generation cycle
@@ -95,11 +83,7 @@ class SpecBase(ABC):
         test_time = 0
         eos_flag = False
 
-        while (
-            len(self.prefix_tokens)
-            < max_new_tokens + self.original_num_tokens + len(warmup_tokens)
-            and not eos_flag
-        ):
+        while len(self.prefix_tokens) < max_new_tokens + self.original_num_tokens + len(warmup_tokens) and not eos_flag:
             logger.debug(f"=====  I T E R  {iter}  ========")
 
             with utils.Timing(synchronize=True) as t0:
@@ -116,9 +100,7 @@ class SpecBase(ABC):
             )
 
             if self.tokenizer.eos_token_id in fresh_tokens:
-                fresh_tokens = fresh_tokens[
-                    : fresh_tokens.index(self.tokenizer.eos_token_id)
-                ]
+                fresh_tokens = fresh_tokens[: fresh_tokens.index(self.tokenizer.eos_token_id)]
                 eos_flag = True
             self.prefix_tokens.extend(fresh_tokens)
 
@@ -135,56 +117,29 @@ class SpecBase(ABC):
         self.summary.update(
             {
                 "iters": len(self.log),
-                "new_tokens": len(self.prefix_tokens)
-                - self.original_num_tokens
-                - len(warmup_tokens),
+                "new_tokens": len(self.prefix_tokens) - self.original_num_tokens - len(warmup_tokens),
                 "tree_h": round(np.mean([x.get("tree_h") for x in self.log]), 1),
                 "tree_w": int(np.mean([x.get("tree_w") for x in self.log])),
                 "tree_size": int(np.mean([x.get("tree_size") for x in self.log])),
                 "t0": round(sum([x.get("t0", 0) for x in self.log]) / len(self.log), 4),
                 "t1": round(sum([x.get("t1", 0) for x in self.log]) / len(self.log), 4),
                 "tft": round(tw0.elapsed + tw1.elapsed, 4),
-                "input_0": int(
-                    sum([x.get("input_len_0", 0) for x in self.log]) / len(self.log)
-                ),
-                "input_1": int(
-                    sum([x.get("input_len_1", 0) for x in self.log]) / len(self.log)
-                ),
-                "min_CLP": round(
-                    np.mean([x.get("lowest_cum_log_prob", 0) for x in self.log]), 2
-                ),
-                "draft_iters": round(
-                    np.mean([x.get("draft_iters", 0) for x in self.log]), 1
-                ),
+                "input_0": int(sum([x.get("input_len_0", 0) for x in self.log]) / len(self.log)),
+                "input_1": int(sum([x.get("input_len_1", 0) for x in self.log]) / len(self.log)),
+                "min_CLP": round(np.mean([x.get("lowest_cum_log_prob", 0) for x in self.log]), 2),
+                "draft_iters": round(np.mean([x.get("draft_iters", 0) for x in self.log]), 1),
                 "mem_use": round(torch.cuda.max_memory_allocated() / 2**30, 2),
-                "mem_rss": round(process.memory_info().rss / 2**30,2),
-                "mem_vms": round(process.memory_info().vms / 2**30,2),
-                "mem_swap": round(process.memory_info().swap / 2**30,2),
-                "mem_available": round(psutil.virtual_memory().available / 2**30,2),
             }
         )
-        self.summary["gen_rate"] = round(
-            self.summary["new_tokens"] / self.summary["iters"], 1
-        )
+        self.summary["gen_rate"] = round(self.summary["new_tokens"] / self.summary["iters"], 1)
         self.summary["speed"] = round(self.summary["new_tokens"] / test_time, 2)
-        logger.debug(
-            f"\nResult tokens: {self.prefix_tokens}\n string:  {repr(self.tokenizer.decode(self.prefix_tokens))}"
-        )
+        logger.debug(f"\nResult tokens: {self.prefix_tokens}\n string:  {repr(self.tokenizer.decode(self.prefix_tokens))}")
 
         if verbose_output:
             print("Prompt:", "." * 80)
             print(utils.colored(prompt, "GREEN"))
             print("Generated", "." * 80)
-            print(
-                utils.colored(
-                    repr(
-                        self.tokenizer.decode(
-                            self.prefix_tokens[self.original_num_tokens :]
-                        )
-                    ),
-                    "CYAN",
-                )
-            )
+            print(utils.colored(repr(self.tokenizer.decode(self.prefix_tokens[self.original_num_tokens :])), "CYAN"))
             print("=" * 80)
 
     @abstractmethod
