@@ -22,10 +22,11 @@ class EngineRegular:
         self.device = device
         if isinstance(model_name, str):
             self.model = transformers.AutoModelForCausalLM.from_pretrained(
-                model_name, device_map=device
+                model_name, device_map=device, torch_dtype=dtype
             )
         else:
             self.model = model_name
+
         self.config = self.model.config
         self.kv_cache = DynamicCachePlus()
 
