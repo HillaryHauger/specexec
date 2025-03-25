@@ -5,7 +5,6 @@ import logging
 import os
 import socket
 import subprocess
-import time
 from itertools import product
 from pathlib import Path
 
@@ -33,7 +32,6 @@ def create_spec_generator(
     gen_type="SX",
     offload=False,
     airllm=False,
-    airllm_compression="4bit",
     device_size=_DEFAULT_DEVICE_SIZE,
     check_tokenizer=False,
 ):
@@ -92,7 +90,6 @@ def create_spec_generator(
         del tokenizer_1, vv0, vv1
 
     logger.info(f"Loading Model 0: `{model_name_0}`, {draft_engine_class=}")
-    t0 = time.time()
     if draft_engine_class.lower() in ("es", "static", "enginestatic"):
         model_0 = transformers.AutoModelForCausalLM.from_pretrained(
             model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0
@@ -111,8 +108,6 @@ def create_spec_generator(
         draft_engine = engine.EngineRegular(model_name_0, max_len=args.tree_max_len)
     else:
         raise ValueError(f"Unsupported engine class: {draft_engine_class} !")
-    cuda_mem = torch.cuda.memory_allocated(device) / 1024**3
-    logger.info(f"Loading Model 0 cuda memory: {cuda_mem:.2f} GB")
 
     logger.info(f"Loading Model 1: `{model_name_1}`")
     gptq_max_input_length = 16384  # constant for GPTQ models
@@ -133,11 +128,7 @@ def create_spec_generator(
         from airllm import AutoModel
 
         model_1 = AutoModel.from_pretrained(
-            model_name_1,
-            prefetching=False,
-            batch_size_layer=1,
-            compression=airllm_compression,
-            tqdm_disable_progressbar=True,
+            model_name_1, prefetching=False, batch_size_layer=1, compression="4bit"
         )
         logger.info("Finished initialsing airllm model.")
     else:
@@ -165,10 +156,6 @@ def create_spec_generator(
 
     # target_engine = EngineStatic(model_1, max_len=args.tree_max_len)
     target_engine = engine.EngineRegular(model_1, max_len=args.tree_max_len)
-    t1 = time.time()
-    cuda_mem = torch.cuda.memory_allocated(device) / 1024**3
-    logger.info(f"Loading Model 1 cuda memory: {cuda_mem:.2f} GB")
-    logger.info(f"Models loaded in {t1-t0:.2f} s")
 
     if gen_type.lower() in ("sx_base", "base", "sx2", "spec_exec_base", "specexecbase"):
         spec_generator = SpecExecBase(draft_engine, target_engine, tokenizer)
@@ -261,8 +248,6 @@ def run_tests(
             "gen_rate",
             "speed",
             "mem_use",
-            "mem_vms",
-            "mem_rss",
         )
         log_one_line(
             log1,
@@ -291,7 +276,6 @@ def run_tests(
         ),
         t0=round(df.t0.mean(), 4),
         t1=round(df.t1.mean(), 4),
-        tft=round(df.tft.mean(), 4),
         input_0=round(df.input_0.mean(), 1),
         input_1=round(df.input_1.mean(), 1),
         tree_size=round(df.tree_size.mean(), 1),
@@ -300,8 +284,6 @@ def run_tests(
         prompt_len=round(df.prompt_len.mean(), 1),
         min_CLP=round(df.min_CLP.mean(), 2),
         mem_use=round(df.mem_use.max(), 2),
-        mem_vms=round(df.mem_vms.max(), 2),
-        mem_rss=round(df.mem_rss.max(), 2),
     )
 
     torch.cuda.empty_cache()
@@ -379,7 +361,6 @@ def arg_to_list(args, arg):
         list: A list of parsed values from the argument.
     """
     arg_value = getattr(args, arg)
-    print(arg, ":", arg_value)
     float_args = ["min_log_prob"]
     if arg_value is None:
         return [None]
@@ -402,6 +383,7 @@ def arg_to_list(args, arg):
 
 
 def main(args):
+
     logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
     spec_generator = create_spec_generator(
         model_name_0=args.model_0,
@@ -410,7 +392,6 @@ def main(args):
         gen_type=args.gen_type,
         offload=args.offload,
         airllm=args.airllm,
-        airllm_compression=args.airllm_compression,
         device_size=args.device_size,
         check_tokenizer=False,
     )
@@ -652,8 +633,6 @@ def main(args):
                 "gen_rate",
                 "gen_speed",
                 "mem_use",
-                "mem_rss",
-                "mem_vms",
             ]
         ].rename(columns=output_renames)
     )
@@ -671,7 +650,7 @@ if __name__ == "__main__":
 
     # DEFAULT MODEL NAMES
     # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-3.1-8B-bnb-4bit"
+    # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
     # model_name_0 = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ"
     # model_name_1 = "TheBloke/Llama-2-7B-Chat-GPTQ"
@@ -761,8 +740,6 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("-o", "--offload", action="store_true")
-    parser.add_argument("-a", "--airllm", action="store_true")
-    parser.add_argument("--airllm_compression", type=str, default="4bit")
     parser.add_argument("--device_size", type=int, default=_DEFAULT_DEVICE_SIZE)
     parser.add_argument("--wandb", help="Wandb enabled", action="store_true")
     parser.add_argument("--draft_temperature", default=None, type=float),
