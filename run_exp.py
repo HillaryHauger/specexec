@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import time
+import psutil
 from itertools import product
 from pathlib import Path
 
@@ -468,6 +469,7 @@ def main(args):
         verbose=args.verbose,
         msg_type="config",
     )
+    process = psutil.Process()
 
     with torch.inference_mode():
         if args.zero:
@@ -492,7 +494,7 @@ def main(args):
                 eos_token_id=2,
                 pad_token_id=2,
             )
-
+            test_logs = []
             for i in range(
                 args.dataset_start_index, args.dataset_start_index + args.n_tests
             ):
@@ -505,36 +507,48 @@ def main(args):
                         spec_generator.target_engine.model.generate(
                             **inputs, generation_config=gene_config
                         )
+                    res = {
+                        "prompt": i,
+                        "elapsed": round(t.elapsed, 3),
+                        "mem": round(torch.cuda.max_memory_allocated() / 1024**3, 2),
+                        "mem_rss": round(process.memory_info().rss / 2**30, 2),
+                        "mem_vms": round(process.memory_info().vms / 2**30, 2),
+                    }
                     log_one_line(
-                        {"prompt": i, "elapsed": round(t.elapsed, 3)},
+                        res,
                         save_dir=args.save_dir,
                         exp_name=args.exp_name,
                         verbose=args.verbose,
                         msg_type="zero",
                     )
-                    total_time += t.elapsed
+                    test_logs.append(res)
                 except RuntimeError:
                     print(colored(f"RuntineError in test {i}; skipping...", "RED"))
                     pass
-
-            log_dict_zero = {
-                "total_time": round(total_time, 3),
-                "speed": round(args.max_new_tokens * args.n_tests / total_time, 3),
-            }
+            df = pd.DataFrame(test_logs)
+            exp_summary = dict(
+                exp_time=total_time,
+                gen_rate=1.0,
+                gen_speed=round(df.elapsed.mean(), 3),
+                mem_use=round(df.mem.max(), 2),
+                mem_vms=round(df.mem_vms.max(), 2),
+                mem_rss=round(df.mem_rss.max(), 2),
+            )
 
             log_one_line(
-                log_dict_zero,
+                exp_summary,
                 save_dir=args.save_dir,
                 exp_name=args.exp_name,
                 verbose=args.verbose,
                 msg_type="zero",
             )
+
             print(
                 "-" * 120
                 + "\n   S U M M A R Y  (run without speculative decoding) \n"
                 + "-" * 120
             )
-            print(log_dict_zero)
+            print(exp_summary)
             print("-" * 120)
 
             return None, None
