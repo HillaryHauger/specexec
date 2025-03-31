@@ -458,6 +458,8 @@ def main(args):
         hostname=socket.gethostname(),
         commit="none",
         offload=args.offload,
+        airllm=args.airllm,
+        airllm_compression=args.airllm_compression,
         device=torch.cuda.get_device_name(device).replace("NVIDIA ", ""),
     )
     if args.offload:
@@ -522,6 +524,7 @@ def main(args):
                         msg_type="zero",
                     )
                     test_logs.append(res)
+                    total_time += t.elapsed
                 except RuntimeError:
                     print(colored(f"RuntineError in test {i}; skipping...", "RED"))
                     pass
@@ -529,7 +532,7 @@ def main(args):
             exp_summary = dict(
                 exp_time=total_time,
                 gen_rate=1.0,
-                gen_speed=round(df.elapsed.mean(), 3),
+                gen_speed=round(args.max_new_tokens * args.n_tests / total_time, 3),
                 mem_use=round(df.mem.max(), 2),
                 mem_vms=round(df.mem_vms.max(), 2),
                 mem_rss=round(df.mem_rss.max(), 2),
