@@ -101,12 +101,19 @@ class SpecBase(ABC):
             and not eos_flag
         ):
             logger.debug(f"=====  I T E R  {iter}  ========")
-
+            # print(
+            #    "Tree Root: ",
+            #    self.tokenizer.decode(self.tree.data[0, : self.tree.prefix_len]),
+            # )
             with utils.Timing(synchronize=True) as t0:
                 stats0 = self.grow_tree(prefix_tokens=self.prefix_tokens, **kwargs)
+            # print("-" * 20, "Draft tree", "-" * 20)
+            # self.tree.draw()
             with utils.Timing(synchronize=True) as t1:
                 stats1, fresh_tokens = self.validate_tree(**kwargs)
             test_time += t0.elapsed + t1.elapsed
+            # print("-" * 20, f"Generated {len(fresh_tokens)}", "-" * 20)
+            # print("New tokens: ", self.tokenizer.convert_ids_to_tokens(fresh_tokens))
             torch.cuda.empty_cache()
 
             logger.info(
@@ -169,6 +176,7 @@ class SpecBase(ABC):
         logger.debug(
             f"\nResult tokens: {self.prefix_tokens}\n string:  {repr(self.tokenizer.decode(self.prefix_tokens))}"
         )
+        print(f"Result tokens: {self.tokenizer.decode(self.prefix_tokens)}")
 
         if verbose_output:
             print("Prompt:", "." * 80)

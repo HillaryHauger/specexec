@@ -693,8 +693,11 @@ if __name__ == "__main__":
     # model_name_0 = "TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ"
     # model_name_1 = "TheBloke/Llama-2-7B-Chat-GPTQ"
 
+    # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
+
     model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
+    model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
 
     parser = argparse.ArgumentParser()
 
