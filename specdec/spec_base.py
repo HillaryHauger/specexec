@@ -113,6 +113,7 @@ class SpecBase(ABC):
                 stats1, fresh_tokens = self.validate_tree(**kwargs)
             test_time += t0.elapsed + t1.elapsed
             # print("-" * 20, f"Generated {len(fresh_tokens)}", "-" * 20)
+            # print("Draft tree depth: ", stats0["tree_h"])
             # print("New tokens: ", self.tokenizer.convert_ids_to_tokens(fresh_tokens))
             torch.cuda.empty_cache()
 
