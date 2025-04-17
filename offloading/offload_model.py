@@ -150,6 +150,7 @@ def load_transformer_layer_gptq(
                     del sublayers_to_be_replaced[name]
 
     if quantizer is not None:
+        quantizer.select_quant_linear(device_map={"": device}, pack=False)
         quantizer._replace_by_quant_layers(layer1, names=sublayers_to_be_replaced)
 
     # select layer's items from the state_dict and fix prefices
