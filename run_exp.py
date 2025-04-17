@@ -37,6 +37,7 @@ def create_spec_generator(
     airllm_compression="4bit",
     device_size=_DEFAULT_DEVICE_SIZE,
     check_tokenizer=False,
+    torch_compile=False,
 ):
     """Creates a SpecGenerator object for different generation types.
 
@@ -98,6 +99,8 @@ def create_spec_generator(
         model_0 = transformers.AutoModelForCausalLM.from_pretrained(
             model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0
         )
+        if torch_compile:
+            model_0 = torch.compile(model_0)
         draft_engine = engine.EngineStatic(model_0, max_len=args.tree_max_len)
     # elif draft_engine_class.lower() in ("esc", "staticcompiled", "enginestaticcompiled"):
     #     model_0 = transformers.AutoModelForCausalLM.from_pretrained(model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0)
@@ -404,6 +407,10 @@ def arg_to_list(args, arg):
 
 def main(args):
     logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
+    # args.n_tests = 2
+    # args.max_budget = "128"
+    # args.airllm = True
+    # args.torch_compile = True
     spec_generator = create_spec_generator(
         model_name_0=args.model_0,
         model_name_1=args.model_1,
@@ -412,6 +419,7 @@ def main(args):
         offload=args.offload,
         airllm=args.airllm,
         airllm_compression=args.airllm_compression,
+        torch_compile=args.torch_compile,
         device_size=args.device_size,
         check_tokenizer=False,
     )
@@ -460,6 +468,7 @@ def main(args):
         offload=args.offload,
         airllm=args.airllm,
         airllm_compression=args.airllm_compression,
+        torch_compile=args.torch_compile,
         device=torch.cuda.get_device_name(device).replace("NVIDIA ", ""),
     )
     if args.offload:
@@ -697,7 +706,8 @@ if __name__ == "__main__":
     # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
     model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
+    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
+    model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
     parser = argparse.ArgumentParser()
 
@@ -796,6 +806,7 @@ if __name__ == "__main__":
         help="EngineStatic or other class",
         default="EngineRegular",
     )
+    parser.add_argument("--torch_compile", help="torch compile", action="store_true")
 
     args = parser.parse_args()
 
