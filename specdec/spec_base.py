@@ -152,6 +152,7 @@ class SpecBase(ABC):
                 "t0": round(sum([x.get("t0", 0) for x in self.log]) / len(self.log), 4),
                 "t1": round(sum([x.get("t1", 0) for x in self.log]) / len(self.log), 4),
                 "tft": round(tw0.elapsed + tw1.elapsed, 4),
+                "inference_time": round(test_time, 4),
                 "input_0": int(
                     sum([x.get("input_len_0", 0) for x in self.log]) / len(self.log)
                 ),

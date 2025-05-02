@@ -259,6 +259,7 @@ def run_tests(
             "tree_size",
             "t0",
             "t1",
+            "inference_time",
             "input_0",
             "input_1",
             "min_CLP",
@@ -407,7 +408,7 @@ def arg_to_list(args, arg):
 
 def main(args):
     logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
-    # args.n_tests = 2
+    # args.n_tests = 1
     # args.max_budget = "128"
     # args.airllm = True
     # args.torch_compile = True
@@ -706,8 +707,15 @@ if __name__ == "__main__":
     # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
     model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
+    model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-hqq-4bit"
+
+    # model_name_0 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
     # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
+    # model_name_1 = "meta-llama/Llama-2-70b-chat-hf"
+
+    # model_name_0 = "meta-llama/Llama-3.2-1B"
+    # model_name_1 = "meta-llama/Llama-3.2-3B"
+    # model_name_1 = "meta-llama/Llama-3.1-70B"
 
     parser = argparse.ArgumentParser()
 
