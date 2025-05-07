@@ -16,11 +16,11 @@ if "logger" not in globals():
 
 
 class SpecBase(ABC):
-    def __init__(self, draft_engine, target_engine, tokenizer):
+    def __init__(self, draft_engine, target_engine, tokenizer, device=None):
         self.draft_engine = draft_engine
         self.target_engine = target_engine
         self.tokenizer = tokenizer
-        self.device = self.draft_engine.device
+        self.device = device if device else self.draft_engine.device
 
     def generate(self, *args, **kwargs):
         """wrapper around generator"""
@@ -178,7 +178,9 @@ class SpecBase(ABC):
         logger.debug(
             f"\nResult tokens: {self.prefix_tokens}\n string:  {repr(self.tokenizer.decode(self.prefix_tokens))}"
         )
-        print(f"Result tokens: {self.tokenizer.decode(self.prefix_tokens)}")
+        print(
+            f"Result tokens: {self.tokenizer.decode(self.prefix_tokens[self.original_num_tokens :])}"
+        )
 
         if verbose_output:
             print("Prompt:", "." * 80)

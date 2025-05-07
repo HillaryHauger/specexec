@@ -38,6 +38,7 @@ def create_spec_generator(
     device_size=_DEFAULT_DEVICE_SIZE,
     check_tokenizer=False,
     torch_compile=False,
+    zero=False,
 ):
     """Creates a SpecGenerator object for different generation types.
 
@@ -55,7 +56,8 @@ def create_spec_generator(
         offload (bool, optional): Whether to offload model 1 using offloading library. Defaults to False.
         device_size (int, optional): Device size for offloading. Defaults to `_DEFAULT_DEVICE_SIZE`.
         check_tokenizer (bool, optional): Whether to verify if both models have the same tokenizer. Defaults to False.
-
+        torch_compile (bool, optional): Whether to compile the model using torch.compile. Defaults to False.
+        zero (bool, optional): Whether to use zero speculation. Defaults to False.
     Returns:
         SpecGenerator: An instance of a SpecBase subclass object based on the provided parameters.
 
@@ -73,7 +75,14 @@ def create_spec_generator(
     else:
         rev_1 = "main"  # default in `from_pretrained()`
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name_0, legacy=False)
+    if zero:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_name_1, legacy=False
+        )
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_name_0, legacy=False
+        )
 
     if check_tokenizer:
         # verify that the two models have the same tokenizer
@@ -95,7 +104,9 @@ def create_spec_generator(
 
     logger.info(f"Loading Model 0: `{model_name_0}`, {draft_engine_class=}")
     t0 = time.time()
-    if draft_engine_class.lower() in ("es", "static", "enginestatic"):
+    if zero:
+        draft_engine = None
+    elif draft_engine_class.lower() in ("es", "static", "enginestatic"):
         model_0 = transformers.AutoModelForCausalLM.from_pretrained(
             model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0
         )
@@ -175,7 +186,9 @@ def create_spec_generator(
     logger.info(f"Models loaded in {t1-t0:.2f} s")
 
     if gen_type.lower() in ("sx_base", "base", "sx2", "spec_exec_base", "specexecbase"):
-        spec_generator = SpecExecBase(draft_engine, target_engine, tokenizer)
+        spec_generator = SpecExecBase(
+            draft_engine, target_engine, tokenizer, device=device
+        )
     elif gen_type.lower() in ("spec_exec_beams", "specexecbeams", "sx_beams"):
         spec_generator = SpecExecBeams(draft_engine, target_engine, tokenizer)
     elif gen_type.lower() in ("sa", "a", "spec_adaptive", "specadaptive"):
@@ -408,10 +421,12 @@ def arg_to_list(args, arg):
 
 def main(args):
     logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
-    # args.n_tests = 1
+    # args.n_tests = 2
     # args.max_budget = "128"
     # args.airllm = True
     # args.torch_compile = True
+    # args.zero = True
+    # args.gen_type = "SI"
     spec_generator = create_spec_generator(
         model_name_0=args.model_0,
         model_name_1=args.model_1,
@@ -423,6 +438,7 @@ def main(args):
         torch_compile=args.torch_compile,
         device_size=args.device_size,
         check_tokenizer=False,
+        zero=args.zero,
     )
     logger.debug(f"mem use {0}")
 
@@ -516,9 +532,14 @@ def main(args):
                         device
                     )
                     with utils.Timing() as t:
-                        spec_generator.target_engine.model.generate(
+                        output = spec_generator.target_engine.model.generate(
                             **inputs, generation_config=gene_config
                         )
+                    generated_text = spec_generator.tokenizer.decode(
+                        output[0, inputs["input_ids"].shape[-1] :],
+                        skip_special_tokens=True,
+                    )
+                    print("Output:", generated_text)
                     res = {
                         "prompt": i,
                         "elapsed": round(t.elapsed, 3),
@@ -706,15 +727,15 @@ if __name__ == "__main__":
     # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
-    model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-hqq-4bit"
+    # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-hqq-4bit"
 
     # model_name_0 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
     # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
     # model_name_1 = "meta-llama/Llama-2-70b-chat-hf"
 
-    # model_name_0 = "meta-llama/Llama-3.2-1B"
-    # model_name_1 = "meta-llama/Llama-3.2-3B"
+    model_name_0 = "meta-llama/Llama-3.2-1B"
+    model_name_1 = "meta-llama/Llama-3.2-1B"
     # model_name_1 = "meta-llama/Llama-3.1-70B"
 
     parser = argparse.ArgumentParser()
