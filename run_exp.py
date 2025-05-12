@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import socket
-import subprocess
 import time
 import psutil
 from itertools import product
@@ -15,7 +14,7 @@ import torch
 import transformers
 from tqdm.auto import tqdm
 
-from offloading.offload_model import load_gptq_offloaded_model, load_offloaded_model
+from offloading.offload_model import load_offloaded_model
 from specdec import SpecExecBeams, SpecExecBase, SpecInfer, utils
 import engine
 from specdec.utils import colored
@@ -134,6 +133,8 @@ def create_spec_generator(
 
     if offload:
         if "gptq" in model_name_1.lower():
+            from offloading.offload_model_gptq import load_gptq_offloaded_model
+
             model_1 = load_gptq_offloaded_model(
                 model_name_1,
                 device_size=device_size,
@@ -425,6 +426,7 @@ def main(args):
     # args.max_budget = "128"
     # args.airllm = True
     # args.torch_compile = True
+    # args.offload = True
     # args.zero = True
     # args.gen_type = "SI"
     spec_generator = create_spec_generator(
@@ -514,10 +516,10 @@ def main(args):
             total_time = 0
 
             gene_config = transformers.GenerationConfig(
-                max_new_tokens=32,
+                max_new_tokens=args.max_new_tokens,
                 do_sample=True,  # Use sampling
-                temperature=0.6,  # Sampling temperature
-                top_p=0.9,
+                temperature=args.temperature,  # Sampling temperature
+                top_p=args.top_p,
                 bos_token_id=1,
                 eos_token_id=2,
                 pad_token_id=2,
@@ -736,6 +738,8 @@ if __name__ == "__main__":
 
     model_name_0 = "meta-llama/Llama-3.2-1B"
     model_name_1 = "meta-llama/Llama-3.2-1B"
+    # model_name_1 = "meta-llama/Llama-3.2-3B"
+    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-3.2-3B-bnb-4bit"
     # model_name_1 = "meta-llama/Llama-3.1-70B"
 
     parser = argparse.ArgumentParser()
