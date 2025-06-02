@@ -33,7 +33,7 @@ def create_spec_generator(
     gen_type="SX",
     offload=False,
     airllm=False,
-    airllm_compression="4bit",
+    airllm_args={"compression": "4bit"},
     device_size=_DEFAULT_DEVICE_SIZE,
     check_tokenizer=False,
     torch_compile=False,
@@ -150,10 +150,8 @@ def create_spec_generator(
 
         model_1 = AutoModel.from_pretrained(
             model_name_1,
-            prefetching=False,
-            batch_size_layer=1,
-            compression=airllm_compression,
             tqdm_disable_progressbar=True,
+            **airllm_args,
         )
         logger.info("Finished initialsing airllm model.")
     else:
@@ -422,13 +420,18 @@ def arg_to_list(args, arg):
 
 def main(args):
     logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
-    # args.n_tests = 2
-    # args.max_budget = "128"
+    # args.n_tests = 3
+    # args.dataset_start_index = 94
+    # args.max_budget = "128,200,256"
+    # args.max_n_beams = "128"
     # args.airllm = True
+    # args.airllm_compression = "4bit"
+    # args.top_p = 0.9
+    # args.temperature = 0.6
     # args.torch_compile = True
     # args.offload = True
     # args.zero = True
-    # args.gen_type = "SI"
+    args.gen_type = "specexecbase"
     spec_generator = create_spec_generator(
         model_name_0=args.model_0,
         model_name_1=args.model_1,
@@ -436,7 +439,7 @@ def main(args):
         gen_type=args.gen_type,
         offload=args.offload,
         airllm=args.airllm,
-        airllm_compression=args.airllm_compression,
+        airllm_args=args.airllm_args,
         torch_compile=args.torch_compile,
         device_size=args.device_size,
         check_tokenizer=False,
@@ -486,7 +489,7 @@ def main(args):
         commit="none",
         offload=args.offload,
         airllm=args.airllm,
-        airllm_compression=args.airllm_compression,
+        airllm_args=args.airllm_args,
         torch_compile=args.torch_compile,
         device=torch.cuda.get_device_name(device).replace("NVIDIA ", ""),
     )
@@ -737,8 +740,8 @@ if __name__ == "__main__":
     # model_name_1 = "meta-llama/Llama-2-70b-chat-hf"
 
     model_name_0 = "meta-llama/Llama-3.2-1B"
-    model_name_1 = "meta-llama/Llama-3.2-1B"
-    # model_name_1 = "meta-llama/Llama-3.2-3B"
+    # model_name_1 = "meta-llama/Llama-3.2-1B"
+    model_name_1 = "meta-llama/Llama-3.2-3B"
     # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-3.2-3B-bnb-4bit"
     # model_name_1 = "meta-llama/Llama-3.1-70B"
 
@@ -825,7 +828,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("-o", "--offload", action="store_true")
     parser.add_argument("-a", "--airllm", action="store_true")
-    parser.add_argument("--airllm_compression", type=str, default="4bit")
+    parser.add_argument("--airllm_args", type=str, default="4bit")
     parser.add_argument("--device_size", type=int, default=_DEFAULT_DEVICE_SIZE)
     parser.add_argument("--wandb", help="Wandb enabled", action="store_true")
     parser.add_argument("--draft_temperature", default=None, type=float),
@@ -854,6 +857,15 @@ if __name__ == "__main__":
             args.branching = int(args.branching)
         except ValueError:
             pass
+
+    if args.airllm_args is not None:
+        # parsing airllm_args from string to dict
+        if isinstance(args.airllm_args, str):
+            args.airllm_args = json.loads(args.airllm_args)
+        elif not isinstance(args.airllm_args, dict):
+            raise ValueError(
+                f"args.airllm_args should be a JSON string or a dictionary, received {args.airllm_args}."
+            )
 
     if args.temp is not None:
         # overriding args.temperature and args.top_p with decoded args.temp

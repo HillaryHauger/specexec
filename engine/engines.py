@@ -16,11 +16,15 @@ from tqdm import tqdm
 class EngineRegular:
     """wrapper for regular transformers model with regular cache"""
 
-    def __init__(self, model_name, max_len, dtype=torch.float16, device="cuda:0"):
+    def __init__(
+        self, model_name, max_len, dtype=torch.float16, device="cuda:0", device_map=None
+    ):
         self.model_name = model_name
         self.max_len = max_len
         self.device = device
         if isinstance(model_name, str):
+            if device_map is not None:
+                device = device_map
             self.model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_name, device_map=device, torch_dtype=dtype
             )
