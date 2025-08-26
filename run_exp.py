@@ -13,6 +13,7 @@ import pandas as pd
 import torch
 import transformers
 from tqdm.auto import tqdm
+from ast import literal_eval
 
 from offloading.offload_model import load_offloaded_model
 from specdec import SpecExecBeams, SpecExecBase, SpecInfer, utils
@@ -352,7 +353,9 @@ def log_one_line(
         "zero": "blue",
         "info": "GREEN_DARK",
     }
-
+    for k in data_dict.keys():
+        if isinstance(data_dict[k], dict):
+            data_dict[k] = str(data_dict[k])  # convert dicts to strings for logging
     if verbose or (logger.level >= logging.INFO):
         if stdout_whitelist:
             log_line = "  ".join(
@@ -861,12 +864,17 @@ if __name__ == "__main__":
     if args.airllm_args is not None:
         # parsing airllm_args from string to dict
         if isinstance(args.airllm_args, str):
-            args.airllm_args = json.loads(args.airllm_args)
+            try:
+                args.airllm_args = literal_eval(args.airllm_args)
+            except Exception as e:
+                raise ValueError(f"Failed to parse airllm_args: {e}")
         elif not isinstance(args.airllm_args, dict):
             raise ValueError(
-                f"args.airllm_args should be a JSON string or a dictionary, received {args.airllm_args}."
+                f"args.airllm_args should be a string or a dictionary, received {args.airllm_args}."
             )
-
+        if "dtype" in args.airllm_args:
+            # convert str to torch_dtype
+            args.airllm_args["dtype"] = getattr(torch, args.airllm_args["dtype"])
     if args.temp is not None:
         # overriding args.temperature and args.top_p with decoded args.temp
         assert (
