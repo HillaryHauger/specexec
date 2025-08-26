@@ -16,11 +16,11 @@ if "logger" not in globals():
 
 
 class SpecBase(ABC):
-    def __init__(self, draft_engine, target_engine, tokenizer):
+    def __init__(self, draft_engine, target_engine, tokenizer, device=None):
         self.draft_engine = draft_engine
         self.target_engine = target_engine
         self.tokenizer = tokenizer
-        self.device = self.draft_engine.device
+        self.device = device if device else self.draft_engine.device
 
     def generate(self, *args, **kwargs):
         """wrapper around generator"""
@@ -101,19 +101,21 @@ class SpecBase(ABC):
             and not eos_flag
         ):
             logger.debug(f"=====  I T E R  {iter}  ========")
-            # print(
-            #    "Tree Root: ",
-            #    self.tokenizer.decode(self.tree.data[0, : self.tree.prefix_len]),
-            # )
+            logger.debug(
+                self.tokenizer.decode(self.tree.data[0, : self.tree.prefix_len]),
+            )
             with utils.Timing(synchronize=True) as t0:
                 stats0 = self.grow_tree(prefix_tokens=self.prefix_tokens, **kwargs)
-            # print("-" * 20, "Draft tree", "-" * 20)
+            # logger.debug("------------------ Draft tree ------------------")
             # self.tree.draw()
             with utils.Timing(synchronize=True) as t1:
                 stats1, fresh_tokens = self.validate_tree(**kwargs)
             test_time += t0.elapsed + t1.elapsed
-            # print("-" * 20, f"Generated {len(fresh_tokens)}", "-" * 20)
-            # print("New tokens: ", self.tokenizer.convert_ids_to_tokens(fresh_tokens))
+            logger.debug(
+                f"------------------ Generated {len(fresh_tokens)} ------------------"
+            )
+            logger.debug(f"Draft tree depth:  {stats0['tree_h']}")
+            # print"New tokens: ", self.tokenizer.convert_ids_to_tokens(fresh_tokens))
             torch.cuda.empty_cache()
 
             logger.info(
@@ -151,6 +153,7 @@ class SpecBase(ABC):
                 "t0": round(sum([x.get("t0", 0) for x in self.log]) / len(self.log), 4),
                 "t1": round(sum([x.get("t1", 0) for x in self.log]) / len(self.log), 4),
                 "tft": round(tw0.elapsed + tw1.elapsed, 4),
+                "inference_time": round(test_time, 4),
                 "input_0": int(
                     sum([x.get("input_len_0", 0) for x in self.log]) / len(self.log)
                 ),
@@ -176,7 +179,9 @@ class SpecBase(ABC):
         logger.debug(
             f"\nResult tokens: {self.prefix_tokens}\n string:  {repr(self.tokenizer.decode(self.prefix_tokens))}"
         )
-        print(f"Result tokens: {self.tokenizer.decode(self.prefix_tokens)}")
+        print(
+            f"Result tokens: {self.tokenizer.decode(self.prefix_tokens[self.original_num_tokens :])}"
+        )
 
         if verbose_output:
             print("Prompt:", "." * 80)

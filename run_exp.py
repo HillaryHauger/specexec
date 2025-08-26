@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import socket
-import subprocess
 import time
 import psutil
 from itertools import product
@@ -14,8 +13,9 @@ import pandas as pd
 import torch
 import transformers
 from tqdm.auto import tqdm
+from ast import literal_eval
 
-from offloading.offload_model import load_gptq_offloaded_model, load_offloaded_model
+from offloading.offload_model import load_offloaded_model
 from specdec import SpecExecBeams, SpecExecBase, SpecInfer, utils
 import engine
 from specdec.utils import colored
@@ -34,10 +34,11 @@ def create_spec_generator(
     gen_type="SX",
     offload=False,
     airllm=False,
-    airllm_compression="4bit",
+    airllm_args={"compression": "4bit"},
     device_size=_DEFAULT_DEVICE_SIZE,
     check_tokenizer=False,
     torch_compile=False,
+    zero=False,
 ):
     """Creates a SpecGenerator object for different generation types.
 
@@ -55,7 +56,8 @@ def create_spec_generator(
         offload (bool, optional): Whether to offload model 1 using offloading library. Defaults to False.
         device_size (int, optional): Device size for offloading. Defaults to `_DEFAULT_DEVICE_SIZE`.
         check_tokenizer (bool, optional): Whether to verify if both models have the same tokenizer. Defaults to False.
-
+        torch_compile (bool, optional): Whether to compile the model using torch.compile. Defaults to False.
+        zero (bool, optional): Whether to use zero speculation. Defaults to False.
     Returns:
         SpecGenerator: An instance of a SpecBase subclass object based on the provided parameters.
 
@@ -73,7 +75,14 @@ def create_spec_generator(
     else:
         rev_1 = "main"  # default in `from_pretrained()`
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_name_0, legacy=False)
+    if zero:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_name_1, legacy=False
+        )
+    else:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+            model_name_0, legacy=False
+        )
 
     if check_tokenizer:
         # verify that the two models have the same tokenizer
@@ -95,7 +104,9 @@ def create_spec_generator(
 
     logger.info(f"Loading Model 0: `{model_name_0}`, {draft_engine_class=}")
     t0 = time.time()
-    if draft_engine_class.lower() in ("es", "static", "enginestatic"):
+    if zero:
+        draft_engine = None
+    elif draft_engine_class.lower() in ("es", "static", "enginestatic"):
         model_0 = transformers.AutoModelForCausalLM.from_pretrained(
             model_name_0, device_map=device, torch_dtype=torch.float16, revision=rev_0
         )
@@ -123,6 +134,8 @@ def create_spec_generator(
 
     if offload:
         if "gptq" in model_name_1.lower():
+            from offloading.offload_model_gptq import load_gptq_offloaded_model
+
             model_1 = load_gptq_offloaded_model(
                 model_name_1,
                 device_size=device_size,
@@ -138,10 +151,8 @@ def create_spec_generator(
 
         model_1 = AutoModel.from_pretrained(
             model_name_1,
-            prefetching=False,
-            batch_size_layer=1,
-            compression=airllm_compression,
             tqdm_disable_progressbar=True,
+            **airllm_args,
         )
         logger.info("Finished initialsing airllm model.")
     else:
@@ -175,7 +186,9 @@ def create_spec_generator(
     logger.info(f"Models loaded in {t1-t0:.2f} s")
 
     if gen_type.lower() in ("sx_base", "base", "sx2", "spec_exec_base", "specexecbase"):
-        spec_generator = SpecExecBase(draft_engine, target_engine, tokenizer)
+        spec_generator = SpecExecBase(
+            draft_engine, target_engine, tokenizer, device=device
+        )
     elif gen_type.lower() in ("spec_exec_beams", "specexecbeams", "sx_beams"):
         spec_generator = SpecExecBeams(draft_engine, target_engine, tokenizer)
     elif gen_type.lower() in ("sa", "a", "spec_adaptive", "specadaptive"):
@@ -259,6 +272,7 @@ def run_tests(
             "tree_size",
             "t0",
             "t1",
+            "inference_time",
             "input_0",
             "input_1",
             "min_CLP",
@@ -339,7 +353,9 @@ def log_one_line(
         "zero": "blue",
         "info": "GREEN_DARK",
     }
-
+    for k in data_dict.keys():
+        if isinstance(data_dict[k], dict):
+            data_dict[k] = str(data_dict[k])  # convert dicts to strings for logging
     if verbose or (logger.level >= logging.INFO):
         if stdout_whitelist:
             log_line = "  ".join(
@@ -407,10 +423,18 @@ def arg_to_list(args, arg):
 
 def main(args):
     logger.info(f"Starting test with models {args.model_0}, {args.model_1}")
-    # args.n_tests = 2
-    # args.max_budget = "128"
+    # args.n_tests = 3
+    # args.dataset_start_index = 94
+    # args.max_budget = "128,200,256"
+    # args.max_n_beams = "128"
     # args.airllm = True
+    # args.airllm_compression = "4bit"
+    # args.top_p = 0.9
+    # args.temperature = 0.6
     # args.torch_compile = True
+    # args.offload = True
+    # args.zero = True
+    args.gen_type = "specexecbase"
     spec_generator = create_spec_generator(
         model_name_0=args.model_0,
         model_name_1=args.model_1,
@@ -418,10 +442,11 @@ def main(args):
         gen_type=args.gen_type,
         offload=args.offload,
         airllm=args.airllm,
-        airllm_compression=args.airllm_compression,
+        airllm_args=args.airllm_args,
         torch_compile=args.torch_compile,
         device_size=args.device_size,
         check_tokenizer=False,
+        zero=args.zero,
     )
     logger.debug(f"mem use {0}")
 
@@ -467,7 +492,7 @@ def main(args):
         commit="none",
         offload=args.offload,
         airllm=args.airllm,
-        airllm_compression=args.airllm_compression,
+        airllm_args=args.airllm_args,
         torch_compile=args.torch_compile,
         device=torch.cuda.get_device_name(device).replace("NVIDIA ", ""),
     )
@@ -497,10 +522,10 @@ def main(args):
             total_time = 0
 
             gene_config = transformers.GenerationConfig(
-                max_new_tokens=32,
+                max_new_tokens=args.max_new_tokens,
                 do_sample=True,  # Use sampling
-                temperature=0.6,  # Sampling temperature
-                top_p=0.9,
+                temperature=args.temperature,  # Sampling temperature
+                top_p=args.top_p,
                 bos_token_id=1,
                 eos_token_id=2,
                 pad_token_id=2,
@@ -515,9 +540,14 @@ def main(args):
                         device
                     )
                     with utils.Timing() as t:
-                        spec_generator.target_engine.model.generate(
+                        output = spec_generator.target_engine.model.generate(
                             **inputs, generation_config=gene_config
                         )
+                    generated_text = spec_generator.tokenizer.decode(
+                        output[0, inputs["input_ids"].shape[-1] :],
+                        skip_special_tokens=True,
+                    )
+                    print("Output:", generated_text)
                     res = {
                         "prompt": i,
                         "elapsed": round(t.elapsed, 3),
@@ -705,9 +735,18 @@ if __name__ == "__main__":
     # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
     # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
 
-    model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
-    model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
+    # model_name_0 = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-hqq-4bit"
+
+    # model_name_0 = "/nfs/students/hauh/quant/meta-llama-Llama-2-7b-chat-hf-bnb-4bit"
+    # model_name_1 = "meta-llama/Llama-2-7b-chat-hf"
+    # model_name_1 = "meta-llama/Llama-2-70b-chat-hf"
+
+    model_name_0 = "meta-llama/Llama-3.2-1B"
+    # model_name_1 = "meta-llama/Llama-3.2-1B"
+    model_name_1 = "meta-llama/Llama-3.2-3B"
+    # model_name_1 = "/nfs/students/hauh/quant/meta-llama-Llama-3.2-3B-bnb-4bit"
+    # model_name_1 = "meta-llama/Llama-3.1-70B"
 
     parser = argparse.ArgumentParser()
 
@@ -792,7 +831,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("-o", "--offload", action="store_true")
     parser.add_argument("-a", "--airllm", action="store_true")
-    parser.add_argument("--airllm_compression", type=str, default="4bit")
+    parser.add_argument("--airllm_args", type=str, default="4bit")
     parser.add_argument("--device_size", type=int, default=_DEFAULT_DEVICE_SIZE)
     parser.add_argument("--wandb", help="Wandb enabled", action="store_true")
     parser.add_argument("--draft_temperature", default=None, type=float),
@@ -809,7 +848,7 @@ if __name__ == "__main__":
     parser.add_argument("--torch_compile", help="torch compile", action="store_true")
 
     args = parser.parse_args()
-
+    # args.loglevel = "DEBUG"
     logger.setLevel(getattr(logging, args.loglevel.upper(), logging.INFO))
 
     if args.wandb:
@@ -822,6 +861,20 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
+    if args.airllm_args is not None:
+        # parsing airllm_args from string to dict
+        if isinstance(args.airllm_args, str):
+            try:
+                args.airllm_args = literal_eval(args.airllm_args)
+            except Exception as e:
+                raise ValueError(f"Failed to parse airllm_args: {e}")
+        elif not isinstance(args.airllm_args, dict):
+            raise ValueError(
+                f"args.airllm_args should be a string or a dictionary, received {args.airllm_args}."
+            )
+        if "dtype" in args.airllm_args:
+            # convert str to torch_dtype
+            args.airllm_args["dtype"] = getattr(torch, args.airllm_args["dtype"])
     if args.temp is not None:
         # overriding args.temperature and args.top_p with decoded args.temp
         assert (

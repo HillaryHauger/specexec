@@ -59,19 +59,19 @@ class Timing:
     def __enter__(self):
         if self.synchronize:
             torch.cuda.synchronize(self.device)
-        self.start = time.perf_counter()
+        self.start = time.time()
         return self
 
     @property
     def elapsed(self):
         if self._elapsed is None:
-            return time.perf_counter() - self.start
+            return time.time() - self.start
         return self._elapsed
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.synchronize:
             torch.cuda.synchronize(self.device)
-        self._elapsed = time.perf_counter() - self.start
+        self._elapsed = time.time() - self.start
 
 
 def set_seed(seed=0):
@@ -87,7 +87,9 @@ def kv_cache_mask_apply(kv_cache, mask=None, truncate=None):
     if mask is None:
         mask = torch.ones(truncate).to(kv_cache[0][0].device).bool()
     if (mask.dtype == torch.bool) and (mask.shape[-1] < kv_cache_len):
-        mask = torch.nn.functional.pad(mask, (0, kv_cache_len - mask.shape[-1]), "constant", False)
+        mask = torch.nn.functional.pad(
+            mask, (0, kv_cache_len - mask.shape[-1]), "constant", False
+        )
     try:
         return tuple(
             (
@@ -138,7 +140,12 @@ def build_amask_slow(parent_indices, start=0):
     start: first input_ids token index
     THIS IS A QUITE SLOW IMPLEMENTATION. USE FOR DEBUG ONLY (~3s with 1k tokens)
     """
-    mask = torch.zeros(parent_indices.shape[-1] - start, parent_indices.shape[-1], dtype=torch.int64, device=parent_indices.device)
+    mask = torch.zeros(
+        parent_indices.shape[-1] - start,
+        parent_indices.shape[-1],
+        dtype=torch.int64,
+        device=parent_indices.device,
+    )
     for i in range(start, parent_indices.shape[-1]):
         pos = torch.tensor([i])
         mask_i = []
@@ -180,12 +187,20 @@ def get_sampling_probas(logits, temperature=1.0, top_p=1.0):
         # Create a mask to remove logits not in the top-p
         sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
         min_tokens_to_keep = 1  # technical constant
-        sorted_indices_to_remove[..., -min_tokens_to_keep:] = 0  # Keep at least min_tokens_to_keep tokens
+        sorted_indices_to_remove[..., -min_tokens_to_keep:] = (
+            0  # Keep at least min_tokens_to_keep tokens
+        )
 
         # Scatter the indices to the original order and mask the logits
-        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-        logits.masked_fill_(indices_to_remove, -float("inf"))  # this is the slowest part of this fn
-        assert (logits > -float("inf")).sum(dim=1).min() >= 1  # check for failure in top-p
+        indices_to_remove = sorted_indices_to_remove.scatter(
+            1, sorted_indices, sorted_indices_to_remove
+        )
+        logits.masked_fill_(
+            indices_to_remove, -float("inf")
+        )  # this is the slowest part of this fn
+        assert (logits > -float("inf")).sum(
+            dim=1
+        ).min() >= 1  # check for failure in top-p
 
     softmax_probas = torch.softmax(logits, dim=-1)
     return softmax_probas
