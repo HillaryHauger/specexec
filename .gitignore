@@ -1,4 +1,5 @@
-specdec/specdec.egg-info/
 **/__pycache__/
 /logs/*
 .vscode/
+/build/*
+/specdec.egg-info/*
